@@ -1,0 +1,93 @@
+name: Firmware ROM Extractor (Optimized 7z)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ARCHIVE_URL:
+        description: "Firmware zip URL (raw link)"
+        required: true
+      OUTPUT_NAME:
+        default: "rom"
+        required: true
+      SLOT:
+        description: "Select slot to extract (A/B)"
+        type: choice
+        options:
+          - "_a"
+          - "_b"
+        default: "_a"
+        required: true
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Install + Download
+      - run: |
+          set -e
+
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            p7zip-full unzip git python3 python3-pip
+
+          mkdir -p in extracted super_out final out
+
+          curl -L --fail "${{ github.event.inputs.ARCHIVE_URL }}" -o in/fw.zip
+          7z x in/fw.zip -oextracted
+
+      # 2. Locate and extract super image
+      - run: |
+          set -e
+
+          SUPER=$(find extracted -type f -name "super*.img*" | head -n1)
+          [ -n "$SUPER" ] || { echo "No super image found"; exit 1; }
+
+          echo "Using: $SUPER"
+
+          git clone https://github.com/unix3dgforce/lpunpack.git
+
+          # optional dependency (safe fallback)
+          pip3 install --user protobuf || true
+
+          python3 lpunpack/lpunpack.py "$SUPER" super_out
+
+      # 3. Filter ROM partitions by slot
+      - run: |
+          set -e
+
+          SLOT="${{ github.event.inputs.SLOT }}"
+
+          find super_out -maxdepth 1 -name "*.img" | while read f; do
+            name=$(basename "$f")
+
+            case "$name" in
+              system${SLOT}.img|vendor${SLOT}.img|product${SLOT}.img|system_ext${SLOT}.img|odm${SLOT}.img|\
+              system_dlkm${SLOT}.img|vendor_dlkm${SLOT}.img|odm_dlkm${SLOT}.img|\
+              vbmeta_system${SLOT}.img|vbmeta_vendor${SLOT}.img)
+                clean=$(echo "$name" | sed "s/${SLOT}//")
+                cp "$f" "final/$clean"
+                ;;
+            esac
+          done
+
+          COUNT=$(ls final/*.img 2>/dev/null | wc -l)
+          echo "ROM PARTITIONS: $COUNT"
+          [ "$COUNT" -gt 0 ] || exit 1
+
+      # 4. Recompress
+      - run: |
+          set -e
+
+          cd final
+
+          7z a -mx=7 -ms=on -m0=lzma2:d=256m \
+            "../out/${{ github.event.inputs.OUTPUT_NAME }}.7z" .
+
+      - uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.run_id }}
+          name: rom-${{ github.run_id }}
+          files: out/${{ github.event.inputs.OUTPUT_NAME }}.7z
