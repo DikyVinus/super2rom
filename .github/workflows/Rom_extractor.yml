@@ -31,7 +31,7 @@ jobs:
           sudo apt-get install -y \
             p7zip-full unzip git python3 python3-pip
 
-          mkdir -p in extracted super_out final out
+          mkdir -p in extracted super_out final out grp1 grp2
 
           curl -L --fail "${{ github.event.inputs.ARCHIVE_URL }}" -o in/fw.zip
           7z x in/fw.zip -oextracted
@@ -46,7 +46,6 @@ jobs:
           echo "Using: $SUPER"
 
           git clone https://github.com/unix3dgforce/lpunpack.git
-
           pip3 install protobuf
 
           python3 lpunpack/lpunpack.py "$SUPER" super_out
@@ -74,20 +73,60 @@ jobs:
           echo "ROM PARTITIONS: $COUNT"
           [ "$COUNT" -gt 0 ] || exit 1
 
-      # 4. Recompress (auto-split under 2GB)
+      # 4. Size-based grouping
       - run: |
           set -e
 
-          cd final
+          LIMIT=$((1900 * 1024 * 1024)) # ~1.9GB per archive
 
-          7z a -mx=7 -ms=on -m0=lzma2:d=256m -v1900m \
-            "../out/${{ github.event.inputs.OUTPUT_NAME }}.7z" .
+          size1=0
+          size2=0
 
-      # 5. Release (supports split parts)
+          # sort largest first
+          for f in $(ls -S final/*.img); do
+            fsize=$(stat -c%s "$f")
+
+            if [ "$size1" -le "$size2" ]; then
+              if [ $((size1 + fsize)) -le $LIMIT ]; then
+                cp "$f" grp1/
+                size1=$((size1 + fsize))
+              else
+                cp "$f" grp2/
+                size2=$((size2 + fsize))
+              fi
+            else
+              if [ $((size2 + fsize)) -le $LIMIT ]; then
+                cp "$f" grp2/
+                size2=$((size2 + fsize))
+              else
+                cp "$f" grp1/
+                size1=$((size1 + fsize))
+              fi
+            fi
+          done
+
+          echo "Group1 size: $size1"
+          echo "Group2 size: $size2"
+
+      # 5. Compress groups
+      - run: |
+          set -e
+
+          [ "$(ls grp1 2>/dev/null)" ] && \
+          7z a -mx=7 -ms=on -m0=lzma2:d=256m \
+            "out/${{ github.event.inputs.OUTPUT_NAME }}-part1.7z" grp1/*
+
+          [ "$(ls grp2 2>/dev/null)" ] && \
+          7z a -mx=7 -ms=on -m0=lzma2:d=256m \
+            "out/${{ github.event.inputs.OUTPUT_NAME }}-part2.7z" grp2/*
+
+      # 6. Release
       - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.run_id }}
           name: rom-${{ github.run_id }}
-          files: out/${{ github.event.inputs.OUTPUT_NAME }}.7z*
+          files: |
+            out/${{ github.event.inputs.OUTPUT_NAME }}-part1.7z*
+            out/${{ github.event.inputs.OUTPUT_NAME }}-part2.7z*
