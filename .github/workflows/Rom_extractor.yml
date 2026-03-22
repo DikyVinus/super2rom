@@ -21,6 +21,7 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
+    permissions: write-all
 
     steps:
       # 1. Install + Download
