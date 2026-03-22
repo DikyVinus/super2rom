@@ -33,10 +33,76 @@ vbmeta_system.img
 vbmeta_vendor.img
 ```
 
+---
+
+### Tutorial (GitHub Actions)
+
+1. Fork the repository
+
+Go to your repository page
+
+Click Fork
+
+This creates your own copy
+
+
 
 ---
 
-Workflow
+2. Enable Actions
+
+Go to Actions tab
+
+If prompted, enable workflows
+
+
+
+---
+
+3. Run the workflow
+
+Open Actions
+
+Select: Firmware ROM Extractor (Optimized 7z)
+
+Click Run workflow
+
+
+Fill inputs:
+
+ARCHIVE_URL → direct raw firmware link
+
+OUTPUT_NAME → output name (e.g. rom)
+
+SLOT → _a or _b
+
+
+
+---
+
+4. Wait for completion
+
+Workflow runs on GitHub runner
+
+Takes ~5–15 minutes depending on firmware size
+
+
+
+---
+
+5. Download result
+
+Go to Releases
+
+Find latest run (tag = run ID)
+
+Download .7z file
+
+
+
+---
+
+### Workflow Pipeline
 
 firmware.zip
   ↓
@@ -48,7 +114,7 @@ lpunpack
   ↓
 partition_a / partition_b
   ↓
-select slot (_a or _b)
+select slot
   ↓
 normalize names
   ↓
@@ -57,25 +123,7 @@ normalize names
 
 ---
 
-Features
-
-Supports A/B dynamic partition devices
-
-Slot selection (_a or _b)
-
-Removes duplicate partitions
-
-Outputs slot-independent ROM set
-
-Uses solid 7z compression (-ms=on)
-
-No dependency on sparse conversion
-
-
-
----
-
-Inputs
+### Inputs
 
 Name	Description
 
@@ -87,56 +135,56 @@ SLOT	Slot selection (_a or _b)
 
 ---
 
-Requirements
+### Requirements
+
+Handled automatically in workflow:
 
 Python 3
 
-protobuf Python module
+protobuf
 
-lpunpack.py (from unix3dgforce repo)
+p7zip
 
-7z (p7zip)
+lpunpack (Python script)
 
 
 
 ---
 
-Limitations
+### Limitations
 
-Only supports firmware with super.img
+Requires super.img (dynamic partition devices only)
 
-Does not process non-dynamic partition devices
+Does not support non-A/B devices
 
 Does not merge slots
 
-Assumes partitions are valid and consistent
-
-Compression gains are minimal for .img data
+.img compression gains are minimal
 
 
 
 ---
 
-Notes
+### Notes
 
-.img files are already high-entropy; recompression mainly reduces duplication (A/B)
+Size reduction comes from removing duplicate A/B partitions
 
-Output size is typically ~50% of original super partition (due to slot removal)
+Recompression does not significantly shrink .img
 
-Designed for extraction, not optimization
+Output is intended for modification or repacking
 
 
 
 ---
 
-Example
+### Example
 
-Input:  firmware.zip (6 GB super)
+Input:  firmware.zip (~6 GB super)
 Output: rom.7z (~3 GB, single slot)
 
 
 ---
 
-Purpose
+### Purpose
 
-Create a minimal, clean ROM package from Android dynamic partitions without unnecessary duplication.
+Generate a clean, slot-specific ROM package from Android dynamic partitions without duplication.
