@@ -36,7 +36,7 @@ jobs:
           curl -L --fail "${{ github.event.inputs.ARCHIVE_URL }}" -o in/fw.zip
           7z x in/fw.zip -oextracted
 
-      # 2. Locate and extract super image
+      # 2. Extract super.img
       - run: |
           set -e
 
@@ -47,12 +47,11 @@ jobs:
 
           git clone https://github.com/unix3dgforce/lpunpack.git
 
-          # optional dependency (safe fallback)
-          pip3 install --user protobuf || true
+          pip3 install protobuf
 
           python3 lpunpack/lpunpack.py "$SUPER" super_out
 
-      # 3. Filter ROM partitions by slot
+      # 3. Filter partitions
       - run: |
           set -e
 
@@ -75,19 +74,20 @@ jobs:
           echo "ROM PARTITIONS: $COUNT"
           [ "$COUNT" -gt 0 ] || exit 1
 
-      # 4. Recompress
+      # 4. Recompress (auto-split under 2GB)
       - run: |
           set -e
 
           cd final
 
-          7z a -mx=7 -ms=on -m0=lzma2:d=256m \
+          7z a -mx=7 -ms=on -m0=lzma2:d=256m -v1900m \
             "../out/${{ github.event.inputs.OUTPUT_NAME }}.7z" .
 
+      # 5. Release (supports split parts)
       - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.run_id }}
           name: rom-${{ github.run_id }}
-          files: out/${{ github.event.inputs.OUTPUT_NAME }}.7z
+          files: out/${{ github.event.inputs.OUTPUT_NAME }}.7z*
