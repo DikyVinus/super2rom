@@ -12,17 +12,13 @@ on:
       SLOT:
         description: "Select slot to extract (A/B)"
         type: choice
-        options:
-          - "_a"
-          - "_b"
+        options: ["_a","_b"]
         default: "_a"
         required: true
       INCLUDE_NON_SUPER:
-        description: "Include non-super images (boot, dtbo, etc)"
+        description: "Include non-super images"
         type: choice
-        options:
-          - "true"
-          - "false"
+        options: ["true","false"]
         default: "false"
         required: true
 
@@ -32,22 +28,20 @@ jobs:
     permissions: write-all
 
     steps:
-      # 1. Install + Download
+      # Install + Download
       - run: |
           set -e
           sudo apt-get update -y
-          sudo apt-get install -y \
-            p7zip-full unzip git python3 python3-pip
+          sudo apt-get install -y p7zip-full unzip git python3 python3-pip
 
-          mkdir -p in extracted super_out final nonsuper out groups groups_ns
+          mkdir -p in extracted super_out final nonsuper out groups
 
           curl -L --fail "${{ github.event.inputs.ARCHIVE_URL }}" -o in/fw.zip
           7z x in/fw.zip -oextracted
 
-      # 2. Extract super.img
+      # Extract super
       - run: |
           set -e
-
           SUPER=$(find extracted -type f -name "super*.img*" | head -n1)
           [ -n "$SUPER" ] || exit 1
 
@@ -56,7 +50,7 @@ jobs:
 
           python3 lpunpack/lpunpack.py "$SUPER" super_out
 
-      # 3. Filter super partitions
+      # Filter ROM partitions
       - run: |
           set -e
           SLOT="${{ github.event.inputs.SLOT }}"
@@ -76,7 +70,7 @@ jobs:
 
           [ "$(ls final/*.img 2>/dev/null | wc -l)" -gt 0 ] || exit 1
 
-      # 4. Optional non-super extraction
+      # Collect non-super
       - run: |
           set -e
 
@@ -97,81 +91,73 @@ jobs:
             done
           fi
 
-      # 5. Group function
+      # Group ROM partitions (4GB)
       - run: |
           set -e
 
-          group_dir () {
-            SRC=$1
-            DST=$2
+          LIMIT=$((4 * 1024 * 1024 * 1024))
 
-            LIMIT=$((4 * 1024 * 1024 * 1024))
+          declare -a sizes
+          declare -a dirs
+          group_count=0
 
-            declare -a sizes
-            declare -a dirs
-            group_count=0
+          for f in $(ls -S final/*.img); do
+            fsize=$(stat -c%s "$f")
+            placed=0
 
-            for f in $(ls -S $SRC/*.img 2>/dev/null || true); do
-              fsize=$(stat -c%s "$f")
-              placed=0
-
-              for i in "${!sizes[@]}"; do
-                if [ $((sizes[i] + fsize)) -le $LIMIT ]; then
-                  cp "$f" "${dirs[i]}/"
-                  sizes[i]=$((sizes[i] + fsize))
-                  placed=1
-                  break
-                fi
-              done
-
-              if [ "$placed" -eq 0 ]; then
-                dir="$DST/part$group_count"
-                mkdir -p "$dir"
-
-                cp "$f" "$dir"
-
-                sizes[$group_count]=$fsize
-                dirs[$group_count]=$dir
-                group_count=$((group_count + 1))
+            for i in "${!sizes[@]}"; do
+              if [ $((sizes[i] + fsize)) -le $LIMIT ]; then
+                cp "$f" "${dirs[i]}/"
+                sizes[i]=$((sizes[i] + fsize))
+                placed=1
+                break
               fi
             done
-          }
 
-          group_dir final groups
+            if [ "$placed" -eq 0 ]; then
+              dir="groups/part$group_count"
+              mkdir -p "$dir"
 
-          if [ "${{ github.event.inputs.INCLUDE_NON_SUPER }}" = "true" ]; then
-            group_dir nonsuper groups_ns
-          fi
+              cp "$f" "$dir"
 
-      # 6. Compress
+              sizes[$group_count]=$fsize
+              dirs[$group_count]=$dir
+              group_count=$((group_count + 1))
+            fi
+          done
+
+      # Compress with semantic names
       - run: |
           set -e
 
+          OUTPUT="${{ github.event.inputs.OUTPUT_NAME }}"
+
+          # ROM groups
           for dir in groups/part*; do
             [ -d "$dir" ] || continue
-            name=$(basename "$dir")
+
+            parts=$(ls "$dir"/*.img | xargs -n1 basename | sed 's/.img//' | tr '\n' '-' | sed 's/-$//' | cut -c1-120)
 
             7z a -mx=7 -ms=on -m0=lzma2:d=256m -v1900m \
-              "out/${{ github.event.inputs.OUTPUT_NAME }}-$name.7z" "$dir"/*
+              "out/${OUTPUT}-${parts}.7z" "$dir"/*
           done
 
+          # NON-SUPER single archive
           if [ "${{ github.event.inputs.INCLUDE_NON_SUPER }}" = "true" ]; then
-            for dir in groups_ns/part*; do
-              [ -d "$dir" ] || continue
-              name=$(basename "$dir")
+            if ls nonsuper/*.img >/dev/null 2>&1; then
+
+              parts=$(ls nonsuper/*.img | xargs -n1 basename | sed 's/.img//' | tr '\n' '-' | sed 's/-$//' | cut -c1-120)
 
               7z a -mx=7 -ms=on -m0=lzma2:d=256m -v1900m \
-                "out/${{ github.event.inputs.OUTPUT_NAME }}-nonsuper-$name.7z" "$dir"/*
-            done
+                "out/${OUTPUT}-nonsuper-${parts}.7z" nonsuper/*
+            fi
           fi
 
-      # 7. Release
+      # Release
       - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.run_id }}
           name: rom-${{ github.run_id }}
-          files: |
-            out/${{ github.event.inputs.OUTPUT_NAME }}-part*.7z*
-            out/${{ github.event.inputs.OUTPUT_NAME }}-nonsuper-part*.7z*
+          files: out/*.7z*
